@@ -43,6 +43,12 @@ def test_load_schema_invalid(tmp_path):
     assert gate.load_findings(p) is None
 
 
+def test_load_invalid_utf8(tmp_path):
+    p = tmp_path / "f.json"
+    p.write_bytes(b"\xff\xfe\x00")
+    assert gate.load_findings(p) is None
+
+
 # --- build_report / render_summary ----------------------------------------
 
 NOW = datetime(2026, 9, 24, 12, 0, tzinfo=timezone.utc)

@@ -60,7 +60,7 @@ def load_findings(path: Path | None, schema_path: Path = SCHEMA_PATH) -> dict | 
         data = json.loads(path.read_text(encoding="utf-8"))
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
         jsonschema.validate(data, schema)
-    except (json.JSONDecodeError, jsonschema.ValidationError):
+    except (json.JSONDecodeError, jsonschema.ValidationError, OSError, UnicodeDecodeError):
         return None
     return data
 
@@ -100,7 +100,7 @@ def render_summary(report: dict) -> str:
     return "\n".join(lines)
 
 
-def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--analyzers", choices=["passed", "failed"], required=True)
     p.add_argument("--claude-status", choices=CLAUDE_STATUSES, required=True)
@@ -111,7 +111,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--sha", required=True)
     p.add_argument("--out", type=Path, default=Path("findings.json"))
     p.add_argument("--summary", type=Path, default=os.environ.get("GITHUB_STEP_SUMMARY"))
-    return p.parse_args(argv)
+    return p
+
+
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    return build_parser().parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:

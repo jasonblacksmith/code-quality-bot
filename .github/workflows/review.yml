@@ -80,7 +80,7 @@ jobs:
     # the override label itself was just added: Claude findings can't block
     # then, so re-running Claude is wasted cost.
     if: >-
-      always() && needs.analyzers.result != 'skipped' &&
+      !cancelled() && needs.analyzers.result != 'skipped' &&
       !(github.event.action == 'labeled' && github.event.label.name == inputs.override_label)
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -146,6 +146,12 @@ jobs:
             echo "schema=$(python3 -c 'import json;print(json.dumps(json.load(open(".bot/schema/findings.schema.json")),separators=(",",":")))')"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Remove PR-supplied Claude config
+        # PR authors must not be able to inject hooks/MCP servers into a run
+        # that holds the Claude secret. Keep CLAUDE.md (harmless context).
+        if: steps.creds.outputs.ok == 'true'
+        run: rm -f .claude/settings.json .claude/settings.local.json .mcp.json
+
       - name: Claude review
         id: claude1
         if: steps.creds.outputs.ok == 'true'
@@ -156,7 +162,6 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: ${{ steps.prep.outputs.prompt }}
-          use_sticky_comment: true
           claude_args: >-
             --max-turns 30
             --json-schema '${{ steps.prep.outputs.schema }}'
@@ -164,7 +169,9 @@ jobs:
 
       - name: Claude review (retry)
         id: claude2
-        if: steps.claude1.outcome == 'failure'
+        if: >-
+          steps.creds.outputs.ok == 'true' &&
+          (steps.claude1.outcome == 'failure' || steps.claude1.outputs.structured_output == '')
         continue-on-error: true
         timeout-minutes: 4
         uses: anthropics/claude-code-action@v1
@@ -172,7 +179,6 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: ${{ steps.prep.outputs.prompt }}
-          use_sticky_comment: true
           claude_args: >-
             --max-turns 30
             --json-schema '${{ steps.prep.outputs.schema }}'
@@ -189,8 +195,8 @@ jobs:
           OUT2: ${{ steps.claude2.outputs.structured_output }}
         run: |
           if [ "$CREDS" != "true" ]; then status=no-credentials
-          elif [ "$O1" = "success" ]; then status=success; printf '%s' "$OUT1" > claude-findings.json
-          elif [ "$O2" = "success" ]; then status=success; printf '%s' "$OUT2" > claude-findings.json
+          elif [ "$O1" = "success" ] && [ -n "$OUT1" ]; then status=success; printf '%s' "$OUT1" > claude-findings.json
+          elif [ "$O2" = "success" ] && [ -n "$OUT2" ]; then status=success; printf '%s' "$OUT2" > claude-findings.json
           else status=failure; fi
           echo "status=$status" >> "$GITHUB_OUTPUT"
           echo "Claude status: $status"
@@ -204,7 +210,7 @@ jobs:
 
   gate:
     needs: [analyzers, claude]
-    if: always() && needs.analyzers.result != 'skipped'
+    if: "!cancelled() && needs.analyzers.result != 'skipped'"
     runs-on: ubuntu-latest
     permissions:
       contents: read
