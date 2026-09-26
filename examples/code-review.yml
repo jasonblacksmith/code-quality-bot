@@ -1,0 +1,25 @@
+# Copy to .github/workflows/code-review.yml in a project repo and set `solution`.
+name: Code review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+
+jobs:
+  review:
+    # Only the override label matters; other label changes must not create a
+    # (skipped = passing) gate check or cancel a real run.
+    if: >-
+      (github.event.action != 'labeled' && github.event.action != 'unlabeled') ||
+      github.event.label.name == 'review-override'
+    concurrency:
+      group: code-review-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    uses: jasonblacksmith/code-quality-bot/.github/workflows/review.yml@main
+    with:
+      solution: MudSlinger.sln
+    secrets: inherit
