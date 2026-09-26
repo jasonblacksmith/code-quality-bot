@@ -94,14 +94,16 @@ Otherwise:
    - `prompt`: contents of `.bot/prompts/review.md` with `REPO`, `PR_NUMBER`, `REVIEW_MODE`, `EXCLUDE_PATHS`, and the analyzer diagnostics path substituted.
    - `claude_args`:
      `--max-turns 30 --json-schema <contents of findings.schema.json> --allowedTools "Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*)"`
-   - `use_sticky_comment: true` (one summary comment, updated on each push).
    - `timeout-minutes: 10` on the job, with each Claude review step capped at `timeout-minutes: 4` so a hung attempt fails fast enough for the retry to still run within the job budget.
-5. On failure, retry the step once (second step gated on `steps.claude1.outcome == 'failure'`).
-6. Write the action's `structured_output` to `claude-findings.json` and upload as an artifact.
+   - The prompt tells Claude to post or update exactly one summary comment via `gh pr comment $PR_NUMBER --repo $REPO --edit-last --create-if-none --body "<summary markdown>"`, in both review modes, instead of using the action's own sticky-comment feature.
+5. On failure, or if the first attempt produced no structured output, retry the step once (second step gated on `steps.claude1.outcome == 'failure' || steps.claude1.outputs.structured_output == ''`).
+6. Write the action's `structured_output` to `claude-findings.json` and upload as an artifact. An attempt only counts as successful if it also produced non-empty structured output.
 
 Using `--json-schema` means the findings come back as validated structured output from the action, not a file Claude has to remember to write.
 
-### Job 3 — `gate` (needs: analyzers, claude; `if: always()`)
+Both the `claude` and `gate` jobs use `if: !cancelled() && ...` rather than `if: always() && ...`: `always()` also runs the job when the workflow run was cancelled, which wastes runner time on a review that will never be seen.
+
+### Job 3 — `gate` (needs: analyzers, claude; `if: !cancelled()`)
 
 Runs `python .bot/scripts/gate.py` with: analyzer result, Claude job result (`success` / `failure` / `skipped`), path to `claude-findings.json` (may be absent), and whether the PR currently has `override_label`.
 
@@ -160,8 +162,8 @@ The `gate` job is the one to mark as a required status check in branch protectio
   - **high** — likely bug, data loss, security issue, crash, or broken public contract. Must cite the concrete failure scenario.
   - **medium** — probable problem or significant maintainability risk.
   - **low** — nits, naming, minor style.
-- In `inline` mode, post each finding as an inline comment; in `summary` mode, only update the sticky summary.
-- Return the structured output matching the schema; every inline comment must also appear in `findings`.
+- In both `inline` and `summary` mode, do not post inline comments; post or update exactly one summary comment via `gh pr comment $PR_NUMBER --repo $REPO --edit-last --create-if-none --body "<summary markdown>"`.
+- Return the structured output matching the schema; every finding in the posted comment must also appear in `findings`. Allowed `category` values: `bug`, `security`, `performance`, `maintainability`, `style`, `test`.
 
 ## Error handling summary
 
@@ -176,14 +178,15 @@ The `gate` job is the one to mark as a required status check in branch protectio
 - Override-label events skip Claude.
 - `--max-turns 30`, 10-minute job timeout.
 - Summary-only mode above `max_diff_lines`.
-- Excluded paths per repo; one sticky summary comment.
+- Excluded paths per repo; one summary comment per PR, edited in place via `gh pr comment --edit-last`.
 
 ## Setup (one-time, manual)
 
 1. Create **public** GitHub repo `jasonblacksmith/code-quality-bot`. It has to be public because the reusable workflow checks out this repo for its prompt and scripts, and a caller repo's token can't read a private repo. It contains no secrets.
-2. In each project repo, add secret `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) or `ANTHROPIC_API_KEY`.
-3. Create the `review-override` label in each project repo.
-4. After the first successful run, add the `gate` check as required in branch protection.
+2. Install the Claude GitHub App on each project repo: run `/install-github-app` in Claude Code, or install it from `github.com/apps/claude`.
+3. In each project repo, add secret `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) or `ANTHROPIC_API_KEY`.
+4. Create the `review-override` label in each project repo. If `override_label` is changed from its default, update the caller's hard-coded `'review-override'` in the job `if:` (see caller example) to match.
+5. After the first successful run, add the `gate` check as required in branch protection.
 
 ## Testing
 
