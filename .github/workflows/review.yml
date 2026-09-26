@@ -33,11 +33,10 @@ on:
 
 jobs:
   analyzers:
-    # Skip drafts and label events for labels other than the override label.
-    if: >-
-      github.event.pull_request.draft == false &&
-      ((github.event.action != 'labeled' && github.event.action != 'unlabeled') ||
-       github.event.label.name == inputs.override_label)
+    # Skip drafts. Irrelevant label events are filtered in the caller
+    # workflow's job `if:`, never here: a skipped gate would count as a
+    # passing required check and could override a failing one.
+    if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -50,9 +49,11 @@ jobs:
 
       - name: Build with analyzers
         shell: bash
+        env:
+          SOLUTION: ${{ inputs.solution }}
         run: |
           set -o pipefail
-          dotnet build "${{ inputs.solution }}" \
+          dotnet build "$SOLUTION" \
             -warnaserror \
             -p:EnforceCodeStyleInBuild=true \
             -p:AnalysisLevel=latest-recommended \
@@ -71,14 +72,16 @@ jobs:
         with:
           name: analyzer-diagnostics
           path: analyzer-diagnostics.txt
+          overwrite: true
 
   claude:
     needs: analyzers
-    # Run even if analyzers failed (review is still useful). Skip when the
-    # override label was just added: Claude findings can't block then.
+    # Run even if analyzers failed (review is still useful). Skip only when
+    # the override label itself was just added: Claude findings can't block
+    # then, so re-running Claude is wasted cost.
     if: >-
       always() && needs.analyzers.result != 'skipped' &&
-      github.event.action != 'labeled'
+      !(github.event.action == 'labeled' && github.event.label.name == inputs.override_label)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -99,6 +102,7 @@ jobs:
           else
             echo "ok=false" >> "$GITHUB_OUTPUT"
             echo "::notice::Claude review skipped: no CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY secret."
+            echo "Claude review skipped: no credentials." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - uses: actions/checkout@v4
@@ -146,6 +150,7 @@ jobs:
         id: claude1
         if: steps.creds.outputs.ok == 'true'
         continue-on-error: true
+        timeout-minutes: 4
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -161,6 +166,7 @@ jobs:
         id: claude2
         if: steps.claude1.outcome == 'failure'
         continue-on-error: true
+        timeout-minutes: 4
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -194,6 +200,7 @@ jobs:
         with:
           name: claude-findings
           path: claude-findings.json
+          overwrite: true
 
   gate:
     needs: [analyzers, claude]
@@ -215,6 +222,7 @@ jobs:
       - run: pip install -q "jsonschema>=4.20"
 
       - uses: actions/download-artifact@v4
+        if: needs.claude.outputs.status == 'success'
         continue-on-error: true
         with:
           name: claude-findings
@@ -237,3 +245,4 @@ jobs:
         with:
           name: findings
           path: findings.json
+          overwrite: true

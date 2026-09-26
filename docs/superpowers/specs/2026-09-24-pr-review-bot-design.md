@@ -40,6 +40,12 @@ on:
     types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
 jobs:
   review:
+    if: >-
+      (github.event.action != 'labeled' && github.event.action != 'unlabeled') ||
+      github.event.label.name == 'review-override'
+    concurrency:
+      group: code-review-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
     permissions:
       contents: read
       pull-requests: write
@@ -65,11 +71,11 @@ Secrets (via `secrets: inherit`): `CLAUDE_CODE_OAUTH_TOKEN` **or** `ANTHROPIC_AP
 
 ## Flow
 
-The reusable workflow has three jobs. All jobs skip for draft PRs (`github.event.pull_request.draft == false`) and for `labeled`/`unlabeled` events on any label other than `override_label`.
+The reusable workflow has three jobs. All jobs skip for draft PRs. Irrelevant label events are filtered in the caller workflow's job `if:` (see caller example), never inside this workflow: a skipped `gate` would count as a passing required check and could override a failing one.
 
 ### Job 1 — `analyzers`
 
-1. Checkout PR head; `actions/setup-dotnet`.
+1. Checkout the PR merge ref (default for pull_request); `actions/setup-dotnet`.
 2. `dotnet build <solution> -warnaserror -p:EnforceCodeStyleInBuild=true -p:AnalysisLevel=latest-recommended`, with the log saved to `build.log`.
 3. Extract `: (warning|error) CODE:` lines from `build.log` into `analyzer-diagnostics.txt` (deduplicated) and upload it as an artifact regardless of outcome. SARIF isn't used because MSBuild's `ErrorLog` writes one file per build and projects overwrite each other.
 4. The job fails if the build fails. The gate reads `needs.analyzers.result`.
@@ -77,11 +83,11 @@ The reusable workflow has three jobs. All jobs skip for draft PRs (`github.event
 ### Job 2 — `claude` (needs: analyzers, runs even if analyzers failed)
 
 Skipped when:
-- the event is `labeled` with `override_label` (override means Claude findings can't block, so re-running Claude is wasted cost), or
+- the event is `labeled` and the label is `override_label` (override means Claude findings can't block, so re-running Claude is wasted cost), or
 - no Claude secret is available (e.g. fork PRs). A job summary notice records "Claude review skipped: no credentials"; the gate treats this as *not reviewed* and passes on the Claude side only if the override label is present.
 
 Otherwise:
-1. Checkout PR head (fetch-depth 0) and checkout `code-quality-bot` into `.bot/` for the prompt and schema.
+1. Checkout the PR merge ref (default for pull_request) (fetch-depth 0) and checkout `code-quality-bot` into `.bot/` for the prompt and schema.
 2. Download `analyzer-diagnostics.txt`.
 3. Compute diff size; set `REVIEW_MODE=summary` if > `max_diff_lines`, else `inline`.
 4. Run `anthropics/claude-code-action@v1` with:
@@ -89,7 +95,7 @@ Otherwise:
    - `claude_args`:
      `--max-turns 30 --json-schema <contents of findings.schema.json> --allowedTools "Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*)"`
    - `use_sticky_comment: true` (one summary comment, updated on each push).
-   - `timeout-minutes: 10` on the job.
+   - `timeout-minutes: 10` on the job, with each Claude review step capped at `timeout-minutes: 4` so a hung attempt fails fast enough for the retry to still run within the job budget.
 5. On failure, retry the step once (second step gated on `steps.claude1.outcome == 'failure'`).
 6. Write the action's `structured_output` to `claude-findings.json` and upload as an artifact.
 
@@ -161,7 +167,7 @@ The `gate` job is the one to mark as a required status check in branch protectio
 
 - Analyzer/build failure → check fails; errors in job summary; override does not apply.
 - Claude API error/timeout → one retry, then gate fails with an override-able message.
-- Missing/invalid structured output → treated as Claude failure; raw action output kept via `show_full_output` in the log.
+- Missing/invalid structured output → treated as Claude failure (`show_full_output` is deliberately off: this repo's logs are public).
 - Missing secret → Claude skipped with a notice; gate fails unless overridden.
 
 ## Cost & noise controls
