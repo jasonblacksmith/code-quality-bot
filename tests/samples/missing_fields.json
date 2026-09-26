@@ -1,0 +1,6 @@
+{
+  "summary": "x",
+  "findings": [
+    {"file": "a.cs", "severity": "high", "category": "bug", "message": "m"}
+  ]
+}

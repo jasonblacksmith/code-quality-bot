@@ -40,6 +40,10 @@ on:
     types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
 jobs:
   review:
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
     uses: jasonblacksmith/code-quality-bot/.github/workflows/review.yml@main
     with:
       solution: MudSlinger.sln
@@ -52,7 +56,7 @@ jobs:
 | Input | Required | Default | Purpose |
 |---|---|---|---|
 | `solution` | yes | — | Path to the `.sln` to build |
-| `dotnet_version` | no | `8.0.x` | Passed to `actions/setup-dotnet` |
+| `dotnet_version` | no | `10.0.x` | Passed to `actions/setup-dotnet` |
 | `exclude_paths` | no | bin/obj/generated/lock files | Globs Claude should ignore |
 | `max_diff_lines` | no | `2000` | Above this, Claude does a summary-only review |
 | `override_label` | no | `review-override` | Label that clears Claude blocks |
@@ -66,10 +70,9 @@ The reusable workflow has three jobs. All jobs skip for draft PRs (`github.event
 ### Job 1 — `analyzers`
 
 1. Checkout PR head; `actions/setup-dotnet`.
-2. `dotnet build <solution> -warnaserror -p:EnforceCodeStyleInBuild=true -p:AnalysisLevel=latest-recommended -p:ErrorLog=analyzers.sarif%2Cversion=2.1`
-   (per-repo `.editorconfig` / `Directory.Build.props` still control which rules apply).
-3. Upload `analyzers.sarif` as an artifact regardless of outcome (`if: always()`).
-4. Output `analyzers_passed` = build exit code == 0.
+2. `dotnet build <solution> -warnaserror -p:EnforceCodeStyleInBuild=true -p:AnalysisLevel=latest-recommended`, with the log saved to `build.log`.
+3. Extract `: (warning|error) CODE:` lines from `build.log` into `analyzer-diagnostics.txt` (deduplicated) and upload it as an artifact regardless of outcome. SARIF isn't used because MSBuild's `ErrorLog` writes one file per build and projects overwrite each other.
+4. The job fails if the build fails. The gate reads `needs.analyzers.result`.
 
 ### Job 2 — `claude` (needs: analyzers, runs even if analyzers failed)
 
@@ -79,10 +82,10 @@ Skipped when:
 
 Otherwise:
 1. Checkout PR head (fetch-depth 0) and checkout `code-quality-bot` into `.bot/` for the prompt and schema.
-2. Download `analyzers.sarif`.
+2. Download `analyzer-diagnostics.txt`.
 3. Compute diff size; set `REVIEW_MODE=summary` if > `max_diff_lines`, else `inline`.
 4. Run `anthropics/claude-code-action@v1` with:
-   - `prompt`: contents of `.bot/prompts/review.md` with `REPO`, `PR_NUMBER`, `REVIEW_MODE`, `EXCLUDE_PATHS`, and the SARIF path substituted.
+   - `prompt`: contents of `.bot/prompts/review.md` with `REPO`, `PR_NUMBER`, `REVIEW_MODE`, `EXCLUDE_PATHS`, and the analyzer diagnostics path substituted.
    - `claude_args`:
      `--max-turns 30 --json-schema <contents of findings.schema.json> --allowedTools "Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*)"`
    - `use_sticky_comment: true` (one summary comment, updated on each push).
@@ -171,7 +174,7 @@ The `gate` job is the one to mark as a required status check in branch protectio
 
 ## Setup (one-time, manual)
 
-1. Create GitHub repo `jasonblacksmith/code-quality-bot`. If it's private, enable **Settings → Actions → General → Access → "Accessible from repositories owned by the user"** so other repos can call its workflow.
+1. Create **public** GitHub repo `jasonblacksmith/code-quality-bot`. It has to be public because the reusable workflow checks out this repo for its prompt and scripts, and a caller repo's token can't read a private repo. It contains no secrets.
 2. In each project repo, add secret `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) or `ANTHROPIC_API_KEY`.
 3. Create the `review-override` label in each project repo.
 4. After the first successful run, add the `gate` check as required in branch protection.

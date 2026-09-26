@@ -1,0 +1,20 @@
+{
+  "summary": "One null-dereference risk in the parser.",
+  "findings": [
+    {
+      "file": "src/MudSlinger/Parser.cs",
+      "line": 42,
+      "severity": "high",
+      "category": "bug",
+      "message": "token can be null when input is empty; Split() will throw.",
+      "suggestion": "Return early when input is empty."
+    },
+    {
+      "file": "src/MudSlinger/Parser.cs",
+      "line": 10,
+      "severity": "low",
+      "category": "style",
+      "message": "Name 'tmp' is unclear."
+    }
+  ]
+}
