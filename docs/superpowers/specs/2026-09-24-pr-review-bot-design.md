@@ -148,7 +148,7 @@ The `gate` job is the one to mark as a required status check in branch protectio
 
 - State repo, PR number, review mode, excluded paths.
 - Read the diff with `gh pr diff`; read surrounding code with Read/Grep/Glob when needed.
-- Read the SARIF file and **do not repeat** anything the analyzers already reported.
+- Read the `analyzer-diagnostics.txt` file and **do not repeat** anything the analyzers already reported.
 - Before commenting, check existing review comments (`gh pr view --comments`) and don't duplicate them.
 - Severity rubric (this is what drives blocking, so be explicit):
   - **high** — likely bug, data loss, security issue, crash, or broken public contract. Must cite the concrete failure scenario.
