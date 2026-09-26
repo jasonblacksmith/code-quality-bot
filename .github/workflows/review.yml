@@ -1,0 +1,239 @@
+name: PR review
+
+on:
+  workflow_call:
+    inputs:
+      solution:
+        description: Path to the .sln to build
+        type: string
+        required: true
+      dotnet_version:
+        type: string
+        default: "10.0.x"
+      exclude_paths:
+        description: Comma-separated globs Claude should ignore
+        type: string
+        default: "**/bin/**,**/obj/**,**/*.g.cs,**/*.Designer.cs,**/packages.lock.json"
+      max_diff_lines:
+        description: Above this many changed lines, Claude does a summary-only review
+        type: number
+        default: 2000
+      override_label:
+        type: string
+        default: review-override
+      bot_ref:
+        description: Ref of code-quality-bot to load prompt and scripts from
+        type: string
+        default: main
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: false
+      ANTHROPIC_API_KEY:
+        required: false
+
+jobs:
+  analyzers:
+    # Skip drafts and label events for labels other than the override label.
+    if: >-
+      github.event.pull_request.draft == false &&
+      ((github.event.action != 'labeled' && github.event.action != 'unlabeled') ||
+       github.event.label.name == inputs.override_label)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ inputs.dotnet_version }}
+
+      - name: Build with analyzers
+        shell: bash
+        run: |
+          set -o pipefail
+          dotnet build "${{ inputs.solution }}" \
+            -warnaserror \
+            -p:EnforceCodeStyleInBuild=true \
+            -p:AnalysisLevel=latest-recommended \
+            2>&1 | tee build.log
+
+      - name: Extract diagnostics
+        if: always()
+        shell: bash
+        run: |
+          grep -E ': (warning|error) [A-Z]+[0-9]+:' build.log \
+            | sed -E 's/ \[[^]]*\]$//' | sort -u > analyzer-diagnostics.txt || true
+          echo "$(wc -l < analyzer-diagnostics.txt) diagnostic(s)"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: analyzer-diagnostics
+          path: analyzer-diagnostics.txt
+
+  claude:
+    needs: analyzers
+    # Run even if analyzers failed (review is still useful). Skip when the
+    # override label was just added: Claude findings can't block then.
+    if: >-
+      always() && needs.analyzers.result != 'skipped' &&
+      github.event.action != 'labeled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    outputs:
+      status: ${{ steps.result.outputs.status }}
+    steps:
+      - name: Check credentials
+        id: creds
+        env:
+          OAUTH: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -n "$OAUTH" ] || [ -n "$KEY" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Claude review skipped: no CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY secret."
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.creds.outputs.ok == 'true'
+        with:
+          fetch-depth: 0
+
+      - uses: actions/checkout@v4
+        if: steps.creds.outputs.ok == 'true'
+        with:
+          repository: jasonblacksmith/code-quality-bot
+          ref: ${{ inputs.bot_ref }}
+          path: .bot
+
+      - uses: actions/download-artifact@v4
+        if: steps.creds.outputs.ok == 'true'
+        continue-on-error: true
+        with:
+          name: analyzer-diagnostics
+
+      - name: Prepare prompt and schema
+        id: prep
+        if: steps.creds.outputs.ok == 'true'
+        env:
+          ADDITIONS: ${{ github.event.pull_request.additions }}
+          DELETIONS: ${{ github.event.pull_request.deletions }}
+          MAX_LINES: ${{ inputs.max_diff_lines }}
+          EXCLUDE: ${{ inputs.exclude_paths }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          touch analyzer-diagnostics.txt
+          if [ $((ADDITIONS + DELETIONS)) -gt "$MAX_LINES" ]; then mode=summary; else mode=inline; fi
+          echo "Review mode: $mode ($((ADDITIONS + DELETIONS)) changed lines)"
+          {
+            echo "prompt<<PROMPT_EOF"
+            python3 .bot/scripts/render_prompt.py .bot/prompts/review.md \
+              --set "REPO=$GITHUB_REPOSITORY" --set "PR_NUMBER=$PR" \
+              --set "REVIEW_MODE=$mode" --set "EXCLUDE_PATHS=$EXCLUDE" \
+              --set "DIAGNOSTICS_PATH=analyzer-diagnostics.txt"
+            echo "PROMPT_EOF"
+            echo "schema=$(python3 -c 'import json;print(json.dumps(json.load(open(".bot/schema/findings.schema.json")),separators=(",",":")))')"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Claude review
+        id: claude1
+        if: steps.creds.outputs.ok == 'true'
+        continue-on-error: true
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: ${{ steps.prep.outputs.prompt }}
+          use_sticky_comment: true
+          claude_args: >-
+            --max-turns 30
+            --json-schema '${{ steps.prep.outputs.schema }}'
+            --allowedTools "Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*)"
+
+      - name: Claude review (retry)
+        id: claude2
+        if: steps.claude1.outcome == 'failure'
+        continue-on-error: true
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: ${{ steps.prep.outputs.prompt }}
+          use_sticky_comment: true
+          claude_args: >-
+            --max-turns 30
+            --json-schema '${{ steps.prep.outputs.schema }}'
+            --allowedTools "Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*)"
+
+      - name: Record result
+        id: result
+        if: always()
+        env:
+          CREDS: ${{ steps.creds.outputs.ok }}
+          O1: ${{ steps.claude1.outcome }}
+          O2: ${{ steps.claude2.outcome }}
+          OUT1: ${{ steps.claude1.outputs.structured_output }}
+          OUT2: ${{ steps.claude2.outputs.structured_output }}
+        run: |
+          if [ "$CREDS" != "true" ]; then status=no-credentials
+          elif [ "$O1" = "success" ]; then status=success; printf '%s' "$OUT1" > claude-findings.json
+          elif [ "$O2" = "success" ]; then status=success; printf '%s' "$OUT2" > claude-findings.json
+          else status=failure; fi
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "Claude status: $status"
+
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.result.outputs.status == 'success'
+        with:
+          name: claude-findings
+          path: claude-findings.json
+
+  gate:
+    needs: [analyzers, claude]
+    if: always() && needs.analyzers.result != 'skipped'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: jasonblacksmith/code-quality-bot
+          ref: ${{ inputs.bot_ref }}
+          path: .bot
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -q "jsonschema>=4.20"
+
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: claude-findings
+
+      - name: Gate
+        env:
+          ANALYZERS: ${{ needs.analyzers.result == 'success' && 'passed' || 'failed' }}
+          CLAUDE_STATUS: ${{ needs.claude.outputs.status || (needs.claude.result == 'skipped' && 'skipped' || 'failure') }}
+          OVERRIDE: ${{ contains(github.event.pull_request.labels.*.name, inputs.override_label) }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python .bot/scripts/gate.py \
+            --analyzers "$ANALYZERS" --claude-status "$CLAUDE_STATUS" \
+            --findings claude-findings.json --override "$OVERRIDE" \
+            --repo "$GITHUB_REPOSITORY" --pr "$PR" --sha "$SHA" --out findings.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: findings
+          path: findings.json
