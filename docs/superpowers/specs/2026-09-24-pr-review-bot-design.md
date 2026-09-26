@@ -95,7 +95,7 @@ Otherwise:
    - `claude_args`:
      `--max-turns 30 --json-schema <contents of findings.schema.json> --allowedTools "Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*)"`
    - `timeout-minutes: 10` on the job, with each Claude review step capped at `timeout-minutes: 4` so a hung attempt fails fast enough for the retry to still run within the job budget.
-   - The prompt tells Claude to post or update exactly one summary comment via `gh pr comment $PR_NUMBER --repo $REPO --edit-last --create-if-none --body "<summary markdown>"`, in both review modes, instead of using the action's own sticky-comment feature.
+   - In `inline` mode, Claude also posts each finding as an inline comment via `mcp__github_inline_comment__create_inline_comment`. In both modes, the prompt tells Claude to post or update exactly one summary comment via `gh pr comment $PR_NUMBER --repo $REPO --edit-last --create-if-none --body "<summary markdown>"`, instead of using the action's own sticky-comment feature; in `summary` mode this summary comment is the only comment posted.
 5. On failure, or if the first attempt produced no structured output, retry the step once (second step gated on `steps.claude1.outcome == 'failure' || steps.claude1.outputs.structured_output == ''`).
 6. Write the action's `structured_output` to `claude-findings.json` and upload as an artifact. An attempt only counts as successful if it also produced non-empty structured output.
 
@@ -162,8 +162,8 @@ The `gate` job is the one to mark as a required status check in branch protectio
   - **high** — likely bug, data loss, security issue, crash, or broken public contract. Must cite the concrete failure scenario.
   - **medium** — probable problem or significant maintainability risk.
   - **low** — nits, naming, minor style.
-- In both `inline` and `summary` mode, do not post inline comments; post or update exactly one summary comment via `gh pr comment $PR_NUMBER --repo $REPO --edit-last --create-if-none --body "<summary markdown>"`.
-- Return the structured output matching the schema; every finding in the posted comment must also appear in `findings`. Allowed `category` values: `bug`, `security`, `performance`, `maintainability`, `style`, `test`.
+- In `inline` mode, post each finding as an inline comment; in `summary` mode, do not post inline comments. In both modes, also post or update exactly one summary comment via `gh pr comment $PR_NUMBER --repo $REPO --edit-last --create-if-none --body "<summary markdown>"`.
+- Return the structured output matching the schema; every inline comment and every finding in the summary comment must also appear in `findings`. Allowed `category` values: `bug`, `security`, `performance`, `maintainability`, `style`, `test`.
 
 ## Error handling summary
 

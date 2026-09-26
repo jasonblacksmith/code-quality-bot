@@ -1,11 +1,13 @@
 You are reviewing pull request #$PR_NUMBER in the GitHub repository $REPO.
 
 REVIEW MODE: $REVIEW_MODE
-- inline: review line-by-line.
+- inline: review line-by-line. Post each finding as an inline comment on the
+  changed line using mcp__github_inline_comment__create_inline_comment, IN
+  ADDITION to the summary comment below.
 - summary: the diff is too large for line-by-line review; review at the
-  level of design and risk instead.
-- In both modes, do NOT post inline comments; put everything in the summary
-  comment. Cite files and line numbers in your findings.
+  level of design and risk instead. Do NOT post inline comments; put
+  everything in the summary comment.
+- In both modes, cite files and line numbers in your findings.
 
 IGNORE files matching these globs: $EXCLUDE_PATHS
 
@@ -41,13 +43,15 @@ If the PR looks good, say so and return an empty findings list.
 
 ## Output
 
-- Post or update exactly ONE summary comment on the PR, in both modes, by
+- Post each inline comment (inline mode only). Each comment: the problem, why
+  it matters, and a suggested fix.
+- In both modes, also post or update exactly ONE summary comment on the PR by
   running:
   `gh pr comment $PR_NUMBER --repo $REPO --edit-last --create-if-none --body "<summary markdown>"`
   The summary lists findings by severity (high, then medium, then low), with
   file, line and a short description for each.
 - Return structured output matching the provided JSON schema. `summary` is
-  2-4 sentences on the overall state of the PR. Every finding in the posted
-  comment must also appear in `findings`, with the same file, line and
-  severity. Allowed `category` values: bug, security, performance,
-  maintainability, style, test.
+  2-4 sentences on the overall state of the PR. Every finding you post — as an
+  inline comment or in the summary comment — must also appear in `findings`,
+  with the same file, line and severity. Allowed `category` values: bug,
+  security, performance, maintainability, style, test.
