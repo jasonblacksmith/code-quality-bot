@@ -41,9 +41,9 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ inputs.dotnet_version }}
 
@@ -67,7 +67,7 @@ jobs:
             | sed -E 's/ \[[^]]*\]$//' | sort -u > analyzer-diagnostics.txt || true
           echo "$(wc -l < analyzer-diagnostics.txt) diagnostic(s)"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: analyzer-diagnostics
@@ -105,19 +105,19 @@ jobs:
             echo "Claude review skipped: no credentials." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: steps.creds.outputs.ok == 'true'
         with:
           fetch-depth: 0
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: steps.creds.outputs.ok == 'true'
         with:
           repository: jasonblacksmith/code-quality-bot
           ref: ${{ inputs.bot_ref }}
           path: .bot
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         if: steps.creds.outputs.ok == 'true'
         continue-on-error: true
         with:
@@ -201,7 +201,7 @@ jobs:
           echo "status=$status" >> "$GITHUB_OUTPUT"
           echo "Claude status: $status"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always() && steps.result.outputs.status == 'success'
         with:
           name: claude-findings
@@ -215,19 +215,19 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: jasonblacksmith/code-quality-bot
           ref: ${{ inputs.bot_ref }}
           path: .bot
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
       - run: pip install -q "jsonschema>=4.20"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         if: needs.claude.outputs.status == 'success'
         continue-on-error: true
         with:
@@ -246,7 +246,7 @@ jobs:
             --findings claude-findings.json --override "$OVERRIDE" \
             --repo "$GITHUB_REPOSITORY" --pr "$PR" --sha "$SHA" --out findings.json
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: findings
