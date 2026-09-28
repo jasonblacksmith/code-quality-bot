@@ -50,7 +50,7 @@ jobs:
       contents: read
       pull-requests: write
       id-token: write
-    uses: jasonblacksmith/code-quality-bot/.github/workflows/review.yml@main
+    uses: jasonblacksmith/code-quality-bot/.github/workflows/review.yml@omega
     with:
       solution: MudSlinger.sln
       exclude_paths: "**/bin/**,**/obj/**,**/*.g.cs,**/packages.lock.json"

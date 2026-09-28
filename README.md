@@ -41,7 +41,7 @@ quality dashboard.
 | `exclude_paths` | bin/obj/generated/lock files | Globs Claude ignores |
 | `max_diff_lines` | `2000` | Above this, summary-only review |
 | `override_label` | `review-override` | Label that clears Claude blocks |
-| `bot_ref` | `main` | Ref of this repo to load prompt/scripts from |
+| `bot_ref` | `omega` | Ref of this repo to load prompt/scripts from |
 
 `bot_ref` must equal the ref used in the caller's `uses:
 jasonblacksmith/code-quality-bot/.github/workflows/review.yml@<ref>` line —
