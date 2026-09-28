@@ -83,7 +83,7 @@ jobs:
       !cancelled() && needs.analyzers.result != 'skipped' &&
       !(github.event.action == 'labeled' && github.event.label.name == inputs.override_label)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
       pull-requests: write
@@ -156,7 +156,7 @@ jobs:
         id: claude1
         if: steps.creds.outputs.ok == 'true'
         continue-on-error: true
-        timeout-minutes: 4
+        timeout-minutes: 6
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -173,7 +173,7 @@ jobs:
           steps.creds.outputs.ok == 'true' &&
           (steps.claude1.outcome == 'failure' || steps.claude1.outputs.structured_output == '')
         continue-on-error: true
-        timeout-minutes: 4
+        timeout-minutes: 6
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

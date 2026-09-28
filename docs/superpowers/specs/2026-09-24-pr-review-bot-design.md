@@ -94,7 +94,7 @@ Otherwise:
    - `prompt`: contents of `.bot/prompts/review.md` with `REPO`, `PR_NUMBER`, `REVIEW_MODE`, `EXCLUDE_PATHS`, and the analyzer diagnostics path substituted.
    - `claude_args`:
      `--max-turns 30 --json-schema <contents of findings.schema.json> --allowedTools "Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*)"`
-   - `timeout-minutes: 10` on the job, with each Claude review step capped at `timeout-minutes: 4` so a hung attempt fails fast enough for the retry to still run within the job budget.
+   - `timeout-minutes: 15` on the job, with each Claude review step capped at `timeout-minutes: 6` so a hung attempt fails fast enough for the retry to still run within the job budget.
    - In `inline` mode, Claude also posts each finding as an inline comment via `mcp__github_inline_comment__create_inline_comment`. In both modes, the prompt tells Claude to post or update exactly one summary comment via `gh pr comment $PR_NUMBER --repo $REPO --edit-last --create-if-none --body "<summary markdown>"`, instead of using the action's own sticky-comment feature; in `summary` mode this summary comment is the only comment posted.
 5. On failure, or if the first attempt produced no structured output, retry the step once (second step gated on `steps.claude1.outcome == 'failure' || steps.claude1.outputs.structured_output == ''`).
 6. Write the action's `structured_output` to `claude-findings.json` and upload as an artifact. An attempt only counts as successful if it also produced non-empty structured output.
@@ -176,7 +176,7 @@ The `gate` job is the one to mark as a required status check in branch protectio
 
 - No runs on draft PRs or irrelevant label events.
 - Override-label events skip Claude.
-- `--max-turns 30`, 10-minute job timeout.
+- `--max-turns 30`, 15-minute job timeout, 6 minutes per Claude attempt.
 - Summary-only mode above `max_diff_lines`.
 - Excluded paths per repo; one summary comment per PR, edited in place via `gh pr comment --edit-last`.
 

@@ -48,8 +48,10 @@ If the PR looks good, say so and return an empty findings list.
 - In both modes, also post or update exactly ONE summary comment on the PR by
   running:
   `gh pr comment $PR_NUMBER --repo $REPO --edit-last --create-if-none --body "<summary markdown>"`
-  The summary lists findings by severity (high, then medium, then low), with
-  file, line and a short description for each.
+  The summary lists EVERY finding by severity (high, then medium, then low),
+  with file, line and a short description for each, including every finding
+  you posted as an inline comment. Never write "no findings" if you posted
+  any inline comment.
 - Return structured output matching the provided JSON schema. `summary` is
   2-4 sentences on the overall state of the PR. Every finding you post — as an
   inline comment or in the summary comment — must also appear in `findings`,
