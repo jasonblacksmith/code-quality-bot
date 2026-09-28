@@ -24,7 +24,7 @@ on:
       bot_ref:
         description: Ref of code-quality-bot to load prompt and scripts from
         type: string
-        default: main
+        default: omega
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
         required: false
